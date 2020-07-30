@@ -79,14 +79,9 @@ func TestConcurrency(t *testing.T) {
 }
 
 func TestMultipleHosts(t *testing.T) {
-
 	startTs := time.Now()
 	output, _ := runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "200", "-u", "test", "id")
 	duration := time.Since(startTs)
-
-	if duration > 2*time.Second {
-		t.Errorf("execution took much longer than expected: %v", duration)
-	}
 
 	if c := strings.Count(output, "hello world"); c != 200 {
 		t.Fatalf("incomplete output: expecting %ds \"hello world\", got %d", 200, c)
