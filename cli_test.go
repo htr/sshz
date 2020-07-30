@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -28,6 +29,21 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "building %s failed: %v\n%s", testbin, err, out)
 		os.Exit(2)
+	}
+	var rlim syscall.Rlimit
+	err = syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rlim)
+	if err != nil {
+		log.Fatalln("unable to get resource limits", err)
+	}
+
+	if expectedLim := uint64(2*(testFinalPort-testInitialPort)) + 64; rlim.Cur < expectedLim {
+		rlim.Cur = expectedLim
+
+		err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rlim)
+
+		if err != nil {
+			log.Fatalln("unable to set resource limits", err)
+		}
 	}
 
 	servers := startSSHServer(testInitialPort, testFinalPort)
@@ -61,7 +77,7 @@ func TestSingleHost(t *testing.T) {
 
 func TestConcurrency(t *testing.T) {
 	startTs := time.Now()
-	runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "200", "-u", "test", "id")
+	runSshz(genAddrsList(testInitialPort, testInitialPort+299), "--concurrency", "300", "-u", "test", "id")
 	duration := time.Since(startTs)
 
 	if duration > 3*time.Second {

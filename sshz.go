@@ -46,9 +46,12 @@ func main() {
 		log.Fatalln("unable to get resource limits", err)
 	}
 
-	if rlim.Cur < uint64(len(hosts))+64 {
+	if expectedLim := uint64(len(hosts)) + 64; rlim.Cur < expectedLim {
+		rlim.Cur = expectedLim
 		err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rlim)
-		log.Fatalln("unable to set resource limits", err)
+		if err != nil {
+			log.Fatalln("unable to set resource limits", err)
+		}
 	}
 
 	authMethods := []ssh.AuthMethod{sshAgent()}
