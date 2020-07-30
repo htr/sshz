@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,8 +23,7 @@ const testInitialPort = 51000
 const testFinalPort = 51500
 
 func TestMain(m *testing.M) {
-	args := []string{"build", "-o", testbin}
-	out, err := exec.Command("go", args...).CombinedOutput()
+	out, err := exec.Command("go", "build", "-o", testbin).CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "building %s failed: %v\n%s", testbin, err, out)
 		os.Exit(2)
@@ -46,6 +48,70 @@ func TestUsernameRequired(t *testing.T) {
 	if err == nil {
 		t.Error("should fail when required arguments are missing")
 	}
+}
+
+func TestSingleHost(t *testing.T) {
+	output, _ := runSshz(genAddrsList(testInitialPort, testInitialPort), "-u", "test", "id")
+	if !strings.Contains(output, fmt.Sprintf(":%d", testInitialPort)) {
+		t.Fatalf("didn't find :$port in output %s", output)
+	}
+}
+
+func TestConcurrency(t *testing.T) {
+	startTs := time.Now()
+	runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "200", "-u", "test", "id")
+	duration := time.Since(startTs)
+
+	if duration > 2*time.Second {
+		t.Errorf("execution took much longer than expected (2s): %v", duration)
+	}
+
+	startTs = time.Now()
+	runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "100", "-u", "test", "id")
+	duration = time.Since(startTs)
+
+	if duration < 2*time.Second {
+		t.Errorf("execution took less time than expected (2s): %v", duration)
+	}
+
+}
+
+func TestMultipleHosts(t *testing.T) {
+
+	startTs := time.Now()
+	output, _ := runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "200", "-u", "test", "id")
+	duration := time.Since(startTs)
+
+	if duration > 2*time.Second {
+		t.Errorf("execution took much longer than expected: %v", duration)
+	}
+
+	if c := strings.Count(output, "hello world"); c != 200 {
+		t.Fatalf("incomplete output: expecting %ds \"hello world\", got %d", 200, c)
+	}
+}
+
+func runSshz(input string, args ...string) (string, error) {
+
+	c := exec.Command(testbin, args...)
+
+	stdout := bytes.NewBuffer(nil)
+	stderr := bytes.NewBuffer(nil)
+
+	c.Stdout = stdout
+	c.Stderr = stderr
+	c.Stdin = bytes.NewBufferString(input)
+
+	err := c.Run()
+
+	if err != nil {
+		log.Fatalf("unable to run sshz: %+v\nstdout:%s\nstderr:%s\n", err, stdout.String(), stderr.String())
+	}
+
+	output := stdout.String()
+
+	return output, err
+
 }
 
 // Starts multiple instances of a ssh server listening on from port initialPort
@@ -84,4 +150,13 @@ func startSSHServer(initialPort, finalPort int) []*ssh.Server {
 	}
 
 	return servers
+}
+
+func genAddrsList(initialPort, finalPort int) string {
+	s := ""
+
+	for p := initialPort; p <= finalPort; p++ {
+		s = s + fmt.Sprintf("localhost:%d\n", p)
+	}
+	return s
 }
