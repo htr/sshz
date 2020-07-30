@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -129,25 +130,23 @@ func startSSHServer(initialPort, finalPort int) []*ssh.Server {
 
 	servers := []*ssh.Server{}
 
+	wg := &sync.WaitGroup{}
 	for port := initialPort; port <= finalPort; port++ {
-		go func(port int) {
-
-			s := &ssh.Server{
-				HostSigners: []ssh.Signer{signer},
-				Addr:        fmt.Sprintf("localhost:%d", port),
-				Handler: func(s ssh.Session) {
-					io.WriteString(s, "hello ")
-					time.Sleep(1 * time.Second)
-					io.WriteString(s, "world\n")
-				},
-			}
-			servers = append(servers, s)
-			go func() {
-				s.ListenAndServe()
-			}()
-
-		}(port)
+		s := &ssh.Server{
+			HostSigners: []ssh.Signer{signer},
+			Addr:        fmt.Sprintf("localhost:%d", port),
+			Handler: func(s ssh.Session) {
+				io.WriteString(s, "hello ")
+				time.Sleep(1 * time.Second)
+				io.WriteString(s, "world\n")
+			},
+		}
+		servers = append(servers, s)
+		go func() {
+			s.ListenAndServe()
+		}()
 	}
+	wg.Wait()
 
 	return servers
 }
