@@ -31,7 +31,8 @@ func TestMain(m *testing.M) {
 	}
 
 	servers := startSSHServer(testInitialPort, testFinalPort)
-	time.Sleep(100 * time.Millisecond)
+
+	time.Sleep(500 * time.Millisecond)
 
 	r := m.Run()
 
@@ -63,8 +64,8 @@ func TestConcurrency(t *testing.T) {
 	runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "200", "-u", "test", "id")
 	duration := time.Since(startTs)
 
-	if duration > 2*time.Second {
-		t.Errorf("execution took much longer than expected (2s): %v", duration)
+	if duration > 3*time.Second {
+		t.Errorf("execution took much longer than expected (3s): %v", duration)
 	}
 
 	startTs = time.Now()
