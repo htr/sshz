@@ -27,8 +27,22 @@ var cliArgs struct {
 	Commands     []string `arg:"" name:"commands"`
 }
 
+type App struct{}
+
 func main() {
-	_ = kong.Parse(&cliArgs)
+	app := App{}
+	app.Run(os.Args[1:])
+}
+
+func (a App) Run(args []string) {
+	argsParser, err := kong.New(&cliArgs)
+	if err != nil {
+		log.Panicln(err)
+	}
+	_, err = argsParser.Parse(args)
+	if err != nil {
+		log.Panicln(err)
+	}
 
 	if cliArgs.Verbose {
 		log.Default.Level = log.DEBUG

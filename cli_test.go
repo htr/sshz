@@ -1,15 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,26 +17,29 @@ import (
 	"time"
 
 	"github.com/gliderlabs/ssh"
+	"github.com/kami-zh/go-capturer"
+	"github.com/stretchr/testify/assert"
 	gossh "golang.org/x/crypto/ssh"
 )
 
-const testbin = "/tmp/sshz_test"
 const testInitialPort = 51000
 const testFinalPort = 51500
 
+var testInputFile *os.File
+
 func TestMain(m *testing.M) {
-	out, err := exec.Command("go", "build", "-o", testbin).CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "building %s failed: %v\n%s", testbin, err, out)
-		os.Exit(2)
-	}
 	var rlim syscall.Rlimit
-	err = syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rlim)
+	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rlim)
 	if err != nil {
 		log.Fatalln("unable to get resource limits", err)
 	}
 
-	if expectedLim := uint64(2*(testFinalPort-testInitialPort)) + 64; rlim.Cur < expectedLim {
+	testInputFile, err = ioutil.TempFile("", "sshztest")
+	if err != nil {
+		log.Fatalln("unable to create temporary file", err)
+	}
+
+	if expectedLim := uint64(4*(testFinalPort-testInitialPort)) + 64; rlim.Cur < expectedLim {
 		rlim.Cur = expectedLim
 
 		err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rlim)
@@ -55,29 +58,46 @@ func TestMain(m *testing.M) {
 	for _, s := range servers {
 		s.Shutdown(context.TODO())
 	}
-	os.Remove(testbin)
 
 	os.Exit(r)
 }
 
 func TestUsernameRequired(t *testing.T) {
-	c := exec.Command(testbin)
-	err := c.Run()
-	if err == nil {
-		t.Error("should fail when required arguments are missing")
-	}
+	assert.Panics(t, func() {
+		runSshz("127.0.0.1")
+	}, "should faile when required arguments are missing")
 }
 
 func TestSingleHost(t *testing.T) {
-	output, _ := runSshz(genAddrsList(testInitialPort, testInitialPort), "-u", "test", "id")
+	output, _ := runSshz(genAddrsList(testInitialPort, testInitialPort), "-l", testInputFile.Name(), "-u", "test", "id")
 	if !strings.Contains(output, fmt.Sprintf(":%d", testInitialPort)) {
 		t.Fatalf("didn't find :$port in output %s", output)
 	}
+
+}
+
+func TestJsonOutput(t *testing.T) {
+	output, _ := runSshz(genAddrsList(testInitialPort, testInitialPort), "-l", testInputFile.Name(), "-u", "test", "--output-format", "json", "id")
+
+	var jsonObj []struct {
+		Host   string
+		Output []struct {
+			Line string
+		}
+	}
+
+	if err := json.Unmarshal([]byte(output), &jsonObj); err != nil {
+		t.Fatalf("unable to unmarshal json output %s: %v", output, err)
+	}
+
+	assert.Equal(t, 1, len(jsonObj))
+	assert.Equal(t, 1, len(jsonObj[0].Output))
+	assert.Equal(t, "hello world", jsonObj[0].Output[0].Line)
 }
 
 func TestConcurrency(t *testing.T) {
 	startTs := time.Now()
-	runSshz(genAddrsList(testInitialPort, testInitialPort+299), "--concurrency", "300", "-u", "test", "id")
+	runSshz(genAddrsList(testInitialPort, testInitialPort+299), "-l", testInputFile.Name(), "--concurrency", "300", "-u", "test", "id")
 	duration := time.Since(startTs)
 
 	if duration > 3*time.Second {
@@ -85,7 +105,7 @@ func TestConcurrency(t *testing.T) {
 	}
 
 	startTs = time.Now()
-	runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "100", "-u", "test", "id")
+	runSshz(genAddrsList(testInitialPort, testInitialPort+199), "-l", testInputFile.Name(), "--concurrency", "100", "-u", "test", "id")
 	duration = time.Since(startTs)
 
 	if duration < 2*time.Second {
@@ -95,7 +115,7 @@ func TestConcurrency(t *testing.T) {
 }
 
 func TestMultipleHosts(t *testing.T) {
-	output, _ := runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "200", "-u", "test", "id")
+	output, _ := runSshz(genAddrsList(testInitialPort, testInitialPort+199), "-l", testInputFile.Name(), "--concurrency", "200", "-u", "test", "id")
 
 	if c := strings.Count(output, "hello world"); c != 200 {
 		t.Fatalf("incomplete output: expecting %ds \"hello world\", got %d", 200, c)
@@ -104,25 +124,16 @@ func TestMultipleHosts(t *testing.T) {
 
 func runSshz(input string, args ...string) (string, error) {
 
-	c := exec.Command(testbin, args...)
-
-	stdout := bytes.NewBuffer(nil)
-	stderr := bytes.NewBuffer(nil)
-
-	c.Stdout = stdout
-	c.Stderr = stderr
-	c.Stdin = bytes.NewBufferString(input)
-
-	err := c.Run()
-
-	if err != nil {
-		log.Fatalf("unable to run sshz: %+v\nstdout:%s\nstderr:%s\n", err, stdout.String(), stderr.String())
+	if input != "" {
+		ioutil.WriteFile(testInputFile.Name(), []byte(input), 0644)
 	}
 
-	output := stdout.String()
+	out := capturer.CaptureStdout(func() {
+		app := App{}
+		app.Run(args)
+	})
 
-	return output, err
-
+	return out, nil
 }
 
 // Starts multiple instances of a ssh server listening on from port initialPort
