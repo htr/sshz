@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,7 +31,8 @@ func TestMain(m *testing.M) {
 	}
 
 	servers := startSSHServer(testInitialPort, testFinalPort)
-	time.Sleep(100 * time.Millisecond)
+
+	time.Sleep(500 * time.Millisecond)
 
 	r := m.Run()
 
@@ -62,8 +64,8 @@ func TestConcurrency(t *testing.T) {
 	runSshz(genAddrsList(testInitialPort, testInitialPort+199), "--concurrency", "200", "-u", "test", "id")
 	duration := time.Since(startTs)
 
-	if duration > 2*time.Second {
-		t.Errorf("execution took much longer than expected (2s): %v", duration)
+	if duration > 3*time.Second {
+		t.Errorf("execution took much longer than expected (3s): %v", duration)
 	}
 
 	startTs = time.Now()
@@ -129,25 +131,23 @@ func startSSHServer(initialPort, finalPort int) []*ssh.Server {
 
 	servers := []*ssh.Server{}
 
+	wg := &sync.WaitGroup{}
 	for port := initialPort; port <= finalPort; port++ {
-		go func(port int) {
-
-			s := &ssh.Server{
-				HostSigners: []ssh.Signer{signer},
-				Addr:        fmt.Sprintf("localhost:%d", port),
-				Handler: func(s ssh.Session) {
-					io.WriteString(s, "hello ")
-					time.Sleep(1 * time.Second)
-					io.WriteString(s, "world\n")
-				},
-			}
-			servers = append(servers, s)
-			go func() {
-				s.ListenAndServe()
-			}()
-
-		}(port)
+		s := &ssh.Server{
+			HostSigners: []ssh.Signer{signer},
+			Addr:        fmt.Sprintf("localhost:%d", port),
+			Handler: func(s ssh.Session) {
+				io.WriteString(s, "hello ")
+				time.Sleep(1 * time.Second)
+				io.WriteString(s, "world\n")
+			},
+		}
+		servers = append(servers, s)
+		go func() {
+			s.ListenAndServe()
+		}()
 	}
+	wg.Wait()
 
 	return servers
 }
