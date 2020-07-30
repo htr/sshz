@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -122,8 +123,18 @@ func main() {
 			}
 		}
 
-	} else {
-		log.Panicln("not implemented")
+	} else if cliArgs.OutputFormat == "json" {
+		results := []ExecResult{}
+		for output := range outputChan {
+			results = append(results, output)
+
+		}
+		marshalled, err := json.Marshal(results)
+		if err != nil {
+			log.Fatalln("error marshalling exec results:", err)
+		}
+		outputWrt.Write(marshalled)
+
 	}
 
 }
